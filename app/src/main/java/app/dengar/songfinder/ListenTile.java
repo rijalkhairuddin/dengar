@@ -23,9 +23,10 @@ public class ListenTile extends TileService {
     @SuppressWarnings("deprecation")
     public void onClick() {
         // On the lock screen while a song plays: open the lyrics instead of listening.
+        SpotifyNow.start(this);
         KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
         boolean lyricsOnly = km != null && km.isKeyguardLocked()
-                && MainActivity.lockLyricsOn(this) && NowPlayingService.isPlaying();
+                && MainActivity.lockLyricsOn(this) && SpotifyNow.isPlaying();
         Intent intent = new Intent(this, MainActivity.class)
                 .setAction(lyricsOnly ? Intent.ACTION_MAIN : MainActivity.ACTION_LISTEN)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
