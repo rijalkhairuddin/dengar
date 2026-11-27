@@ -63,6 +63,10 @@ public class NowPlayingService extends NotificationListenerService {
         }
     };
 
+    public static boolean isPlaying() {
+        return last.contains("\"playing\":true");
+    }
+
     public static boolean hasAccess(Context c) {
         String flat = Settings.Secure.getString(c.getContentResolver(), "enabled_notification_listeners");
         return flat != null && flat.contains(c.getPackageName() + "/");
