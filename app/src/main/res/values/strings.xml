@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dengar</string>
+    <string name="widget_label">Dengar</string>
+    <string name="widget_desc">Tap to identify the song that\'s playing</string>
+    <string name="widget_tap">Tap to identify a song</string>
+    <string name="widget_hint">Dengar song finder</string>
+    <string name="tile_label">Dengar</string>
+    <string name="shortcut_short">Identify song</string>
+    <string name="shortcut_long">Identify the song playing</string>
+    <string name="share_title">Share song</string>
+</resources>
