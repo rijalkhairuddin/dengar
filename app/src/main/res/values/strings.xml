@@ -10,4 +10,13 @@
     <string name="shortcut_long">Identify the song playing</string>
     <string name="share_title">Share song</string>
     <string name="np_label">Dengar lyrics for Spotify</string>
+    <string name="lw_name">Dengar lyrics</string>
+    <string name="lw_desc">Live lyrics of the song playing</string>
+    <string name="lw_idle">Play a song to see its lyrics here</string>
+    <string name="lw_access">Open Dengar and tap Allow to see lyrics here</string>
+    <string name="lw_loading">Finding the lyrics…</string>
+    <string name="lw_none">No lyrics found for this song</string>
+    <string name="lw_plain">No synced lyrics for this song. Tap to read them.</string>
+    <string name="lw_error">Can\'t load lyrics right now</string>
+    <string name="lw_paused">Paused</string>
 </resources>
