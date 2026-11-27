@@ -174,8 +174,8 @@ body.locked .lyrics p { font-size: 21px; }
     </div>
     <div class="field" id="npSet" hidden>
       <label>Lyrics for Spotify</label>
-      <div class="hint">Lets Dengar see which song Spotify (or another music app) is playing, so it can show the lyrics in time.</div>
-      <div class="row"><button class="btn" type="button" data-act="np-setup">Set up access</button></div>
+      <div class="hint">Dengar follows the song playing in Spotify and shows its lyrics in time. In Spotify, turn on Settings › Playback › Device Broadcast Status.</div>
+      <div class="row"><button class="btn" type="button" data-act="np-setup">Open Spotify</button></div>
       <label class="tog"><input type="checkbox" id="lockLyr"><span>Show lyrics on the lock screen, and keep the screen on while a song plays</span></label>
       <div class="hint">With this on, lock your phone while Dengar is showing lyrics: pressing the power button brings the lyrics back without unlocking. From the lock screen you can also swipe down and tap the Dengar tile.</div>
     </div>
@@ -485,9 +485,9 @@ function renderNP() {
     lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = "";
     c.hidden = false;
     c.innerHTML = `<div class="np-intro"><b>Lyrics for what's playing in Spotify</b>
-      <span>Dengar can follow the song playing in Spotify (or another music app) and scroll its lyrics in time. No Spotify login needed.</span>
-      <ol><li>Tap <b>Allow</b>, then turn on <b>Dengar</b>.</li><li>If the switch is greyed out: tap <b>App info</b>, then ⋮ (top right) › <b>Allow restricted settings</b>, then try Allow again.</li></ol>
-      <div class="row"><button class="btn primary" type="button" data-act="np-allow">Allow</button><button class="btn" type="button" data-act="np-info">App info</button><button class="btn ghost" type="button" data-act="np-hide">Not now</button></div></div>`;
+      <span>Dengar can follow the song playing in Spotify and scroll its lyrics in time. No Spotify login needed, just one setting in Spotify:</span>
+      <ol><li>Tap <b>Open Spotify</b>, then go to <b>Settings</b> (your profile picture › Settings and privacy).</li><li>Under <b>Playback</b>, turn on <b>Device Broadcast Status</b>.</li><li>Play a song, then come back to Dengar.</li></ol>
+      <div class="row"><button class="btn primary" type="button" data-act="np-allow">Open Spotify</button><button class="btn ghost" type="button" data-act="np-hide">Not now</button></div></div>`;
     return;
   }
   const s = NP.cur;
