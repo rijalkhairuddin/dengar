@@ -1,5 +1,6 @@
 package app.dengar.songfinder;
 
+import android.app.KeyguardManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.os.Build;
@@ -21,8 +22,12 @@ public class ListenTile extends TileService {
     @Override
     @SuppressWarnings("deprecation")
     public void onClick() {
+        // On the lock screen while a song plays: open the lyrics instead of listening.
+        KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        boolean lyricsOnly = km != null && km.isKeyguardLocked()
+                && MainActivity.lockLyricsOn(this) && NowPlayingService.isPlaying();
         Intent intent = new Intent(this, MainActivity.class)
-                .setAction(MainActivity.ACTION_LISTEN)
+                .setAction(lyricsOnly ? Intent.ACTION_MAIN : MainActivity.ACTION_LISTEN)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (Build.VERSION.SDK_INT >= 34) {
             PendingIntent pi = PendingIntent.getActivity(this, 3, intent,
