@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#11183a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Dengar">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<title>Dengar Song Finder</title>
+<style>
+/* Layout: one dark screen. Big listen button centred at top, result card under it, history list below; settings in a bottom sheet. */
+:root {
+  --bg: #11183a;
+  --panel: #1a2350;
+  --line: #2b3670;
+  --ink: #f3f4fb;
+  --muted: #a3a9cf;
+  --accent: #ff6b4a;
+  --accent-ink: #2a0d05;
+  --ok: #6fe0b0;
+  --warn: #ffcf6b;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font); -webkit-tap-highlight-color: transparent; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.app { max-width: 520px; margin: 0 auto; padding: calc(14px + env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) calc(30px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 18px; }
+.top { display: flex; justify-content: space-between; align-items: center; }
+.brand { font-weight: 800; font-size: 20px; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; }
+.brand i { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
+.icon-btn { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-size: 14px; font-weight: 600; }
+.stage { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 10px 0 4px; }
+.listen { position: relative; width: 196px; height: 196px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 10px rgba(255,107,74,.14); transition: transform .15s; }
+.listen:active { transform: scale(.96); }
+.listen svg.bars { width: 84px; height: 84px; }
+.listen .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--accent); opacity: 0; pointer-events: none; }
+.listening .listen .ring { animation: pulse 1.8s ease-out infinite; }
+.listening .listen .ring:nth-child(2) { animation-delay: .6s; }
+.listening .listen .ring:nth-child(3) { animation-delay: 1.2s; }
+@keyframes pulse { 0% { transform: scale(1); opacity: .7; } 100% { transform: scale(1.7); opacity: 0; } }
+.listening .bars rect { animation: eq .9s ease-in-out infinite alternate; transform-origin: 50% 50%; transform-box: fill-box; }
+.listening .bars rect:nth-child(2) { animation-delay: .15s; } .listening .bars rect:nth-child(3) { animation-delay: .3s; }
+.listening .bars rect:nth-child(4) { animation-delay: .45s; } .listening .bars rect:nth-child(5) { animation-delay: .6s; }
+@keyframes eq { from { transform: scaleY(.35); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .listening .listen .ring, .listening .bars rect { animation: none; } }
+.prog { position: absolute; inset: -8px; width: calc(100% + 16px); height: calc(100% + 16px); transform: rotate(-90deg); pointer-events: none; }
+.prog circle { fill: none; stroke: #fff; stroke-width: 4; stroke-linecap: round; opacity: .9; transition: stroke-dashoffset .2s linear; }
+.status { font-size: 17px; font-weight: 600; text-align: center; min-height: 24px; }
+.sub { font-size: 13px; color: var(--muted); text-align: center; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.hit { display: grid; grid-template-columns: 96px 1fr; gap: 14px; align-items: center; }
+.cover { width: 96px; height: 96px; border-radius: 12px; background: #263066; object-fit: cover; display: block; }
+.cover.ph { display: grid; place-items: center; font-size: 34px; color: var(--muted); }
+.hit h2 { margin: 0; font-size: 20px; line-height: 1.2; text-wrap: balance; }
+.hit .artist { font-size: 16px; color: var(--accent); font-weight: 600; margin-top: 4px; }
+.hit .meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.links { display: flex; flex-wrap: wrap; gap: 8px; }
+.links a, .links button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border-radius: 999px; background: #232d63; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 600; }
+.links a.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.msg { font-size: 14px; padding: 12px 14px; border-radius: 12px; background: #232d63; line-height: 1.45; }
+.msg.warn { background: rgba(255,207,107,.14); color: var(--warn); }
+.msg.err { background: rgba(255,107,74,.15); color: #ffb3a2; }
+.hist h3, .sheet h3 { margin: 0; font-size: 15px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.hrow { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); background: none; border-left: 0; border-right: 0; border-bottom: 0; text-align: left; width: 100%; }
+.hrow:first-of-type { border-top: 0; }
+.hrow img, .hrow .cover { width: 48px; height: 48px; border-radius: 8px; font-size: 18px; }
+.hrow .t { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hrow .a { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hrow .w { font-size: 12px; color: var(--muted); text-align: right; }
+.hrow > div { min-width: 0; }
+.pending { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.btn { border: 1px solid var(--line); background: #232d63; border-radius: 12px; padding: 10px 14px; font-weight: 600; font-size: 14px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.ghost { background: none; }
+.empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
+.scrim { position: fixed; inset: 0; background: rgba(5,8,25,.6); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
+.sheet { background: var(--panel); width: 100%; max-width: 520px; border-radius: 20px 20px 0 0; padding: 18px 18px calc(20px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 14px; max-height: 90vh; overflow-y: auto; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 14px; font-weight: 600; }
+.field .hint { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.field .hint a { color: var(--accent); }
+input[type="text"], input[type="password"], select { background: #10173a; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; width: 100%; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+[hidden] { display: none !important; }
+.lyr-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lyr-head h3 { margin: 0; font-size: 15px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.lyr-ctl { display: flex; gap: 6px; align-items: center; }
+.lyr-ctl button { border: 1px solid var(--line); background: #232d63; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 700; }
+.pill { font-size: 11px; font-weight: 700; color: var(--ok); border: 1px solid rgba(111,224,176,.4); border-radius: 999px; padding: 3px 8px; }
+.lyrics { position: relative; max-height: 46vh; overflow-y: auto; scroll-behavior: smooth; padding: 4px 2px; mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); -webkit-mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
+.lyrics p { margin: 0; padding: 5px 0; font-size: 17px; line-height: 1.4; color: var(--muted); transition: color .2s, transform .2s; transform-origin: left center; }
+.lyrics.live p { color: rgba(243,244,251,.45); }
+.lyrics.live p.on { color: var(--ink); font-weight: 700; transform: scale(1.03); }
+.lyrics p.gap { min-height: 14px; }
+.credit { font-size: 11px; color: var(--muted); }
+.credit a { color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><i></i>Dengar</div>
+    <button class="icon-btn" id="setBtn" type="button">Settings</button>
+  </header>
+
+  <section class="stage" id="stage">
+    <button class="listen" id="listenBtn" type="button" aria-describedby="status">
+      <span class="ring"></span><span class="ring"></span><span class="ring"></span>
+      <svg class="prog" viewBox="0 0 212 212" aria-hidden="true"><circle id="progC" cx="106" cy="106" r="102" stroke-dasharray="641" stroke-dashoffset="641"/></svg>
+      <svg class="bars" viewBox="0 0 84 84" aria-hidden="true" fill="#fff">
+        <rect x="8" y="30" width="9" height="24" rx="4.5"/><rect x="23" y="18" width="9" height="48" rx="4.5"/><rect x="38" y="8" width="9" height="68" rx="4.5"/><rect x="53" y="18" width="9" height="48" rx="4.5"/><rect x="68" y="30" width="9" height="24" rx="4.5"/>
+      </svg>
+      <span class="sr" id="listenLbl">Tap to identify the song</span>
+    </button>
+    <div class="status" id="status" aria-live="polite">Tap to identify a song</div>
+    <div class="sub" id="substatus">Hold your phone near the music.</div>
+  </section>
+
+  <div id="note"></div>
+  <section class="card" id="result" hidden></section>
+  <section class="card" id="lyricsCard" hidden></section>
+  <section class="card" id="pendingCard" hidden></section>
+
+  <section class="card hist">
+    <div class="pending"><h3>Your songs</h3><button type="button" class="btn ghost" id="clearBtn" hidden>Clear</button></div>
+    <div id="hist"></div>
+  </section>
+</div>
+
+<div class="scrim" id="scrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+    <h3 id="setTitle">Settings</h3>
+    <div class="field">
+      <label for="tokenIn">AudD API key</label>
+      <input type="password" id="tokenIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste your key here">
+      <div class="hint">Without a key the app uses AudD's free <b>test</b> key, which allows about 10 songs a day. Get your own key (300 free songs to start) at <a href="https://dashboard.audd.io/" target="_blank" rel="noopener">dashboard.audd.io</a>. The key is saved only on this phone.</div>
+      <div class="row"><button class="btn" type="button" id="showTok">Show</button><button class="btn ghost" type="button" id="clearTok">Remove key</button></div>
+    </div>
+    <div class="field">
+      <label for="lenSel">Listening time</label>
+      <select id="lenSel"><option value="6">6 seconds</option><option value="8">8 seconds</option><option value="10">10 seconds</option><option value="12">12 seconds</option></select>
+      <div class="hint">Longer helps in noisy places. Each try uses one request.</div>
+    </div>
+    <div class="msg" id="usage"></div>
+    <div class="row"><button class="btn primary" type="button" id="saveSet">Save</button><button class="btn" type="button" id="closeSet">Close</button></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+
+const S = {
+  token: ls.get("dengar.token", ""),
+  len: ls.get("dengar.len", 8),
+  history: ls.get("dengar.history", []),
+  usage: ls.get("dengar.usage", { total: 0, month: "", monthCount: 0 }),
+  busy: false
+};
+const API = "https://api.audd.io/";
+
+/* ---------- offline queue (IndexedDB) ---------- */
+const DB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    if (!("indexedDB" in window)) return rej(new Error("no idb"));
+    const r = indexedDB.open("dengar", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("clips", { keyPath: "id" });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction("clips", mode); const s = t.objectStore("clips"); const out = fn(s); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error); }); };
+  return {
+    add: clip => tx("readwrite", s => s.put(clip)),
+    all: () => tx("readonly", s => s.getAll()),
+    del: id => tx("readwrite", s => s.delete(id))
+  };
+})();
+
+/* ---------- recording ---------- */
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  for (const m of ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]) {
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
+  }
+  return "";
+}
+let rec = null, stream = null, tick = null, stopTimer = null;
+async function listen() {
+  if (S.busy) { if (rec && rec.state === "recording") rec.stop(); return; }
+  clearResult();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || pickMime() === null) {
+    setStatus("This browser can't record audio", "Open the app in Safari (iPhone) or Chrome (Android)."); return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) {
+    setStatus("Microphone is off", window.Android ? "Allow the microphone for Dengar in your phone's app settings." : "Allow microphone access for this app: on iPhone, Settings › Safari › Microphone, or tap aA in Safari › Website Settings.");
+    note("err", "Dengar needs the microphone to hear the song. Nothing is recorded except the short clip you start.");
+    return;
+  }
+  const mime = pickMime();
+  const chunks = [];
+  try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+  catch (e) { rec = new MediaRecorder(stream); }
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    clearInterval(tick); clearTimeout(stopTimer);
+    stream.getTracks().forEach(t => t.stop());
+    document.body.classList.remove("listening");
+    setProg(0);
+    const type = rec.mimeType || mime || "audio/mp4";
+    const blob = new Blob(chunks, { type });
+    rec = null;
+    if (blob.size < 2000) { S.busy = false; setStatus("Didn't catch anything", "Try again, closer to the speaker."); return; }
+    await identify(blob, type, S.recStart);
+  };
+  S.busy = true;
+  document.body.classList.add("listening");
+  $("listenLbl").textContent = "Listening. Tap to stop early";
+  setStatus("Listening…", "Keep the phone near the music.");
+  const t0 = Date.now(), total = S.len * 1000;
+  tick = setInterval(() => setProg(Math.min(1, (Date.now() - t0) / total)), 100);
+  stopTimer = setTimeout(() => { if (rec && rec.state === "recording") rec.stop(); }, total);
+  S.recStart = Date.now();
+  rec.start();
+}
+function setProg(f) { $("progC").style.strokeDashoffset = String(641 * (1 - f)); }
+
+/* ---------- recognition ---------- */
+function extFor(type) { return /mp4|m4a|aac/.test(type) ? "m4a" : /ogg/.test(type) ? "ogg" : /webm/.test(type) ? "webm" : "audio"; }
+async function callAudd(blob, type) {
+  const fd = new FormData();
+  fd.append("file", blob, "clip." + extFor(type));
+  fd.append("return", "apple_music,spotify");
+  fd.append("api_token", S.token || "test");
+  const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 30000);
+  try {
+    const r = await fetch(API, { method: "POST", body: fd, signal: ctl.signal });
+    return await r.json();
+  } finally { clearTimeout(to); }
+}
+function countUse() {
+  const m = new Date().toISOString().slice(0, 7);
+  if (S.usage.month !== m) { S.usage.month = m; S.usage.monthCount = 0; }
+  S.usage.total++; S.usage.monthCount++;
+  ls.set("dengar.usage", S.usage);
+}
+async function identify(blob, type, recStart) {
+  setStatus("Finding the song…", "This takes a few seconds.");
+  if (!navigator.onLine) { await saveForLater(blob, type); S.busy = false; return; }
+  let j;
+  try { j = await callAudd(blob, type); }
+  catch (e) { await saveForLater(blob, type, true); S.busy = false; return; }
+  S.busy = false; $("listenLbl").textContent = "Tap to identify the song";
+  handleResponse(j, true, recStart);
+}
+function handleResponse(j, show, recStart) {
+  if (!j || j.status !== "success") {
+    const code = j && j.error && j.error.error_code, m = j && j.error && j.error.error_message || "Unknown error";
+    if (code === 900 || /token/i.test(m)) {
+      setStatus("Your API key isn't working", "");
+      note("err", (S.token ? "AudD didn't accept the key saved in Settings. Check it was pasted in full, or remove it to use the free test key." : "The free test key has run out for today (about 10 songs). Add your own free AudD key in Settings to keep going.") + " <button class='btn' type='button' data-act='settings'>Open Settings</button>");
+    } else if (code === 901 || /limit|quota|exceed/i.test(m)) {
+      setStatus("Out of song lookups", "");
+      note("err", (S.token ? "Your AudD key has used its requests. Top up at dashboard.audd.io, or wait for the limit to reset." : "The free test key allows about 10 songs a day. Add your own free AudD key in Settings for 300 more.") + " <button class='btn' type='button' data-act='settings'>Open Settings</button>");
+    } else {
+      setStatus("Couldn't check the song", "");
+      note("err", "AudD replied: " + esc(m));
+    }
+    return null;
+  }
+  countUse();
+  if (!j.result) {
+    if (show) { setStatus("No match", "Try again closer to the speaker, or listen longer in Settings."); }
+    return null;
+  }
+  const item = toItem(j.result);
+  S.history = [item].concat(S.history.filter(h => !(h.title === item.title && h.artist === item.artist && Date.now() - h.at < 3 * 60000))).slice(0, 200);
+  ls.set("dengar.history", S.history);
+  if (show) {
+    setStatus("Found it", ""); showResult(item);
+    const live = recStart && item.tc != null ? recStart - item.tc * 1000 : null;
+    showLyrics(item, live);
+  }
+  renderHist();
+  notifyAndroid(item);
+  return item;
+}
+function toItem(r) {
+  const am = r.apple_music || {}, sp = r.spotify || {};
+  let cover = "";
+  if (am.artwork && am.artwork.url) cover = am.artwork.url.replace("{w}", "400").replace("{h}", "400");
+  else if (sp.album && sp.album.images && sp.album.images[0]) cover = sp.album.images[0].url;
+  return {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    at: Date.now(), title: r.title || "Unknown title", artist: r.artist || "Unknown artist",
+    album: r.album || "", year: (r.release_date || "").slice(0, 4), label: r.label || "",
+    cover, apple: am.url || "", spotify: (sp.external_urls && sp.external_urls.spotify) || "", songlink: r.song_link || "",
+    tc: parseTc(r.timecode)
+  };
+}
+function parseTc(s) {
+  if (!s) return null;
+  const p = String(s).split(":").map(Number);
+  if (p.some(isNaN)) return null;
+  return p.reduce((a, b) => a * 60 + b, 0);
+}
+function notifyAndroid(it) {
+  try { if (window.Android && Android.onSongFound) Android.onSongFound(JSON.stringify({ title: it.title, artist: it.artist, cover: it.cover, link: it.songlink || it.apple || it.spotify || "" })); } catch (e) {}
+}
+
+/* ---------- lyrics (LRCLIB, free, no key) ---------- */
+const LRC = "https://lrclib.net/api/";
+async function lrcFetch(path, params) {
+  const r = await fetch(LRC + path + "?" + new URLSearchParams(params));
+  if (r.status === 404) return { miss: true };
+  if (!r.ok) throw new Error("lrclib " + r.status);
+  return r.json();
+}
+async function getLyrics(it) {
+  if (it.lyrics) return it.lyrics;
+  const base = it.title.replace(/\s*[\(\[][^\)\]]*(feat|ft\.|with|remaster|version|edit|mix|live)[^\)\]]*[\)\]]/gi, "").replace(/\s+-\s+.*(remaster|version|edit|mix|live).*$/i, "").trim() || it.title;
+  const artist = it.artist.split(/\s*(,|&| feat\.? | ft\.? | x )\s*/i)[0];
+  let hit = null, definitive = true;
+  try {
+    const g = await lrcFetch("get", { artist_name: it.artist, track_name: it.title });
+    if (!g.miss && (g.syncedLyrics || g.plainLyrics || g.instrumental)) hit = g;
+    if (!hit) {
+      const list = await lrcFetch("search", { artist_name: artist, track_name: base });
+      if (Array.isArray(list)) hit = list.find(x => x.syncedLyrics) || list.find(x => x.plainLyrics) || null;
+    }
+    if (!hit) {
+      const list = await lrcFetch("search", { q: `${base} ${artist}` });
+      if (Array.isArray(list)) hit = list.find(x => x.syncedLyrics) || list.find(x => x.plainLyrics) || null;
+    }
+  } catch (e) { definitive = false; }
+  const L = hit ? { synced: hit.syncedLyrics || "", plain: hit.plainLyrics || "", instrumental: !!hit.instrumental } : { none: true };
+  if (definitive) {
+    it.lyrics = L;
+    const h = S.history.find(x => x.id === it.id);
+    if (h) { h.lyrics = L; ls.set("dengar.history", S.history); }
+  }
+  return definitive ? L : { error: true };
+}
+function parseSynced(txt) {
+  const out = [];
+  for (const line of txt.split(/\r?\n/)) {
+    const tags = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    if (!tags.length) continue;
+    const text = line.replace(/\[[^\]]*\]/g, "").trim();
+    for (const m of tags) out.push({ t: +m[1] * 60 + +m[2], text });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+let lyrTimer = null, lyrOffset = 0;
+async function showLyrics(it, songStart) {
+  const card = $("lyricsCard");
+  clearInterval(lyrTimer); lyrOffset = 0;
+  card.hidden = false;
+  card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3></div><div class="empty">Looking for the lyrics…</div>`;
+  const L = await getLyrics(it);
+  if ($("result").dataset.id !== it.id) return; // another song opened meanwhile
+  const credit = `<div class="credit">Lyrics from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a></div>`;
+  if (L.error) { card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3></div><div class="empty">Couldn't load lyrics right now. They'll load when you open this song again online.</div>`; return; }
+  if (L.none || L.instrumental) { card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3></div><div class="empty">${L.instrumental ? "This one's instrumental." : "No lyrics found for this song."}</div>`; return; }
+  const lines = L.synced ? parseSynced(L.synced) : [];
+  const live = !!(songStart && lines.length);
+  const body = lines.length ? lines.map((l, i) => `<p data-i="${i}" class="${l.text ? "" : "gap"}">${esc(l.text) || "&nbsp;"}</p>`).join("")
+    : (L.plain || "").split(/\r?\n/).map(x => `<p class="${x.trim() ? "" : "gap"}">${esc(x) || "&nbsp;"}</p>`).join("");
+  card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3>${live ? `<div class="lyr-ctl"><span class="pill">In sync</span><button type="button" data-act="lyr-" aria-label="Lyrics earlier">−1s</button><button type="button" data-act="lyr+" aria-label="Lyrics later">+1s</button></div>` : ""}</div>
+    <div class="lyrics${live ? " live" : ""}" id="lyrBox">${body}</div>${credit}`;
+  if (!live) return;
+  let last = -1;
+  const box = $("lyrBox"), ps = box.querySelectorAll("p");
+  const step = () => {
+    const pos = (Date.now() - songStart) / 1000 + lyrOffset;
+    let idx = -1;
+    for (let i = 0; i < lines.length; i++) { if (lines[i].t <= pos) idx = i; else break; }
+    if (idx !== last) {
+      if (last >= 0 && ps[last]) ps[last].classList.remove("on");
+      if (idx >= 0 && ps[idx]) { ps[idx].classList.add("on"); box.scrollTop = ps[idx].offsetTop - box.clientHeight / 2 + ps[idx].clientHeight / 2; }
+      last = idx;
+    }
+    if (pos > lines[lines.length - 1].t + 15) { clearInterval(lyrTimer); box.classList.remove("live"); const pill = card.querySelector(".lyr-ctl"); if (pill) pill.remove(); }
+  };
+  step(); lyrTimer = setInterval(step, 250);
+}
+
+async function saveForLater(blob, type, failed) {
+  try {
+    await DB.add({ id: Date.now().toString(36), at: Date.now(), type, blob });
+    setStatus("Saved for later", "");
+    note("warn", (failed ? "Couldn't reach the song service. " : "You're offline. ") + "The clip is saved and will be identified automatically when you're back online.");
+  } catch (e) {
+    setStatus("You're offline", "Connect to the internet and try again.");
+  }
+  renderPending();
+}
+let flushing = false;
+async function flushPending() {
+  if (flushing || !navigator.onLine) return;
+  let clips = [];
+  try { clips = await DB.all(); } catch (e) { return; }
+  if (!clips.length) { renderPending(); return; }
+  flushing = true;
+  let found = 0, none = 0;
+  for (const c of clips.sort((a, b) => a.at - b.at)) {
+    let j; try { j = await callAudd(c.blob, c.type); } catch (e) { break; }
+    if (!j || j.status !== "success") { handleResponse(j, false); break; }
+    const item = handleResponse(j, false);
+    if (item) { item.at = c.at; ls.set("dengar.history", S.history); found++; } else none++;
+    await DB.del(c.id);
+  }
+  flushing = false;
+  if (found || none) note("ok", `Checked ${found + none} saved clip${found + none > 1 ? "s" : ""}: ${found} found${none ? `, ${none} with no match` : ""}.`);
+  renderHist(); renderPending();
+}
+
+/* ---------- rendering ---------- */
+function setStatus(a, b) { $("status").textContent = a; $("substatus").textContent = b || ""; }
+function note(kind, html) { $("note").innerHTML = html ? `<div class="msg ${kind === "err" ? "err" : kind === "warn" ? "warn" : ""}">${html}</div>` : ""; }
+function clearResult() { $("result").hidden = true; $("result").dataset.id = ""; $("lyricsCard").hidden = true; clearInterval(lyrTimer); note(""); }
+function links(it) {
+  const q = encodeURIComponent(`${it.title} ${it.artist}`);
+  const a = [];
+  if (it.apple) a.push(`<a class="primary" href="${esc(it.apple)}" target="_blank" rel="noopener">Apple Music</a>`);
+  if (it.spotify) a.push(`<a ${it.apple ? "" : 'class="primary"'} href="${esc(it.spotify)}" target="_blank" rel="noopener">Spotify</a>`);
+  a.push(`<a href="https://www.youtube.com/results?search_query=${q}" target="_blank" rel="noopener">YouTube</a>`);
+  if (navigator.share || (window.Android && Android.share)) a.push(`<button type="button" data-act="share" data-id="${it.id}">Share</button>`);
+  return a.join("");
+}
+function coverHtml(it, cls) { return it.cover ? `<img class="${cls}" src="${esc(it.cover)}" alt="" loading="lazy">` : `<div class="${cls} cover ph" aria-hidden="true">♪</div>`; }
+function showResult(it) {
+  const meta = [it.album, it.year].filter(Boolean).join(" · ");
+  $("result").innerHTML = `<div class="hit">${coverHtml(it, "cover")}<div><h2>${esc(it.title)}</h2><div class="artist">${esc(it.artist)}</div>${meta ? `<div class="meta">${esc(meta)}</div>` : ""}</div></div><div class="links">${links(it)}</div>`;
+  $("result").hidden = false;
+  $("result").dataset.id = it.id;
+}
+function when(ts) {
+  const d = new Date(ts), now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+function renderHist() {
+  $("clearBtn").hidden = !S.history.length;
+  $("hist").innerHTML = S.history.length ? S.history.map(it => `<button type="button" class="hrow" data-open="${it.id}">${coverHtml(it, "cover")}<div><div class="t">${esc(it.title)}</div><div class="a">${esc(it.artist)}</div></div><div class="w">${esc(when(it.at))}</div></button>`).join("")
+    : `<div class="empty">Songs you identify will appear here.</div>`;
+}
+async function renderPending() {
+  let n = 0; try { n = (await DB.all()).length; } catch (e) {}
+  const c = $("pendingCard");
+  c.hidden = !n;
+  if (n) c.innerHTML = `<div class="pending"><span>${n} saved clip${n > 1 ? "s" : ""} waiting to be identified.</span><button class="btn" type="button" data-act="flush">${navigator.onLine ? "Identify now" : "Waiting for internet"}</button></div>`;
+}
+function renderUsage() {
+  const u = S.usage;
+  $("usage").textContent = `Key in use: ${S.token ? "your own key" : "free test key (about 10 a day)"}. Lookups from this phone: ${u.monthCount || 0} this month, ${u.total || 0} in total.`;
+}
+
+/* ---------- settings ---------- */
+function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("scrim").hidden = false; $("tokenIn").focus(); }
+function closeSettings() { $("scrim").hidden = true; }
+$("setBtn").onclick = openSettings;
+$("closeSet").onclick = closeSettings;
+$("scrim").addEventListener("click", e => { if (e.target === $("scrim")) closeSettings(); });
+$("showTok").onclick = () => { const i = $("tokenIn"); i.type = i.type === "password" ? "text" : "password"; $("showTok").textContent = i.type === "password" ? "Show" : "Hide"; };
+$("clearTok").onclick = () => { $("tokenIn").value = ""; };
+$("saveSet").onclick = () => {
+  S.token = $("tokenIn").value.trim(); S.len = parseInt($("lenSel").value, 10) || 8;
+  ls.set("dengar.token", S.token); ls.set("dengar.len", S.len);
+  closeSettings(); note("ok", "Settings saved.");
+};
+$("clearBtn").onclick = () => { $("clearBtn").textContent === "Tap again to clear" ? (S.history = [], ls.set("dengar.history", []), renderHist(), $("clearBtn").textContent = "Clear") : ($("clearBtn").textContent = "Tap again to clear", setTimeout(() => $("clearBtn").textContent = "Clear", 3000)); };
+
+/* ---------- events ---------- */
+$("listenBtn").onclick = listen;
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.open) { const it = S.history.find(h => h.id === b.dataset.open); if (it) { clearResult(); showResult(it); showLyrics(it, null); setStatus(it.title, it.artist); window.scrollTo({ top: 0, behavior: "smooth" }); } }
+  else if (b.dataset.act === "share") {
+    const it = S.history.find(h => h.id === b.dataset.id); if (!it) return;
+    const url = it.songlink || it.apple || it.spotify || "";
+    if (window.Android && Android.share) Android.share(`${it.title} by ${it.artist}${url ? " " + url : ""}`);
+    else navigator.share({ title: `${it.title} – ${it.artist}`, text: `${it.title} by ${it.artist}`, url: url || undefined }).catch(() => {});
+  }
+  else if (b.dataset.act === "settings") openSettings();
+  else if (b.dataset.act === "lyr-") lyrOffset -= 1;
+  else if (b.dataset.act === "lyr+") lyrOffset += 1;
+  else if (b.dataset.act === "flush") flushPending();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("scrim").hidden) closeSettings(); });
+window.addEventListener("online", () => { flushPending(); renderPending(); });
+window.addEventListener("offline", renderPending);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") flushPending(); });
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+
+window.dengarListen = () => { if (!S.busy) { window.scrollTo(0, 0); listen(); } };
+renderHist(); renderPending(); flushPending();
+if (S.history.length) setStatus("Tap to identify a song", `${S.history.length} song${S.history.length > 1 ? "s" : ""} found so far.`);
+</script>
+</body>
+</html>
