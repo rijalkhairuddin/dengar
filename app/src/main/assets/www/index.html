@@ -115,12 +115,6 @@ input[type="text"], input[type="password"], select { background: #10173a; border
 .np-intro ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
 .tog { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.4; }
 .tog input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
-.lockhint { display: none; font-size: 13px; color: var(--muted); }
-body.locked .lockhint { display: inline; }
-body.locked #setBtn, body.locked .hist, body.locked #pendingCard, body.locked #result, body.locked #lyricsCard, body.locked #note { display: none !important; }
-body.locked.np-on .stage { display: none; }
-body.locked .lyrics { max-height: 64vh; }
-body.locked .lyrics p { font-size: 21px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -128,7 +122,6 @@ body.locked .lyrics p { font-size: 21px; }
 <div class="app">
   <header class="top">
     <div class="brand"><i></i>Dengar</div>
-    <span class="lockhint">Unlock to see your songs</span>
     <button class="icon-btn" id="setBtn" type="button">Settings</button>
   </header>
 
@@ -176,8 +169,6 @@ body.locked .lyrics p { font-size: 21px; }
       <label>Lyrics for Spotify</label>
       <div class="hint">Dengar follows the song playing in Spotify and shows its lyrics in time. In Spotify, turn on Settings › Playback › Device Broadcast Status.</div>
       <div class="row"><button class="btn" type="button" data-act="np-setup">Open Spotify</button></div>
-      <label class="tog"><input type="checkbox" id="lockLyr"><span>Show lyrics on the lock screen, and keep the screen on while a song plays</span></label>
-      <div class="hint">With this on, lock your phone while Dengar is showing lyrics: pressing the power button brings the lyrics back without unlocking. From the lock screen you can also swipe down and tap the Dengar tile.</div>
     </div>
     <div class="field" id="spSet" hidden>
       <label for="spIdIn">Spotify (lyrics for what's playing)</label>
@@ -557,12 +548,7 @@ async function webAwake(on) {
     else if (!on && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
   } catch (e) { wakeLock = null; }
 }
-const NP = { cur: null, key: "", cache: {}, awake: false };
-window.dengarLocked = l => { document.body.classList.toggle("locked", !!l); if (l) closeSettings(); };
-function npAwake(on) {
-  on = !!(on && Android.keepAwake && Android.lockLyrics && Android.lockLyrics());
-  if (on !== NP.awake) { NP.awake = on; try { Android.keepAwake(on); } catch (e) {} }
-}
+const NP = { cur: null, key: "", cache: {} };
 window.dengarNowPlaying = st => { NP.cur = st && st.title ? st : null; renderNP(); };
 function npPos() {
   const s = NP.cur; if (!s) return 0;
@@ -571,8 +557,7 @@ function npPos() {
 function renderNP() {
   const c = $("npCard"), lc = $("npLyrics");
   document.body.classList.toggle("np-on", !!(NP.cur && NPS.ready()));
-  if (window.Android && Android.keepAwake) npAwake(NP.cur && NP.cur.playing);
-  else webAwake(!!(NP.cur && NP.cur.playing && NPS.ready()));
+  if (!window.Android) webAwake(!!(NP.cur && NP.cur.playing && NPS.ready()));
   const off = () => { c.hidden = true; lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = ""; };
   if (!NPS.ready()) {
     if (ls.get("dengar.npHide", false)) return off();
@@ -648,7 +633,7 @@ function renderUsage() {
 }
 
 /* ---------- settings ---------- */
-function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); renderSpSet(); if (window.Android && Android.lockLyrics) $("lockLyr").checked = Android.lockLyrics(); $("scrim").hidden = false; $("tokenIn").focus(); }
+function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); renderSpSet(); $("scrim").hidden = false; $("tokenIn").focus(); }
 function renderSpSet() {
   $("spSet").hidden = NPS.kind !== "web";
   $("spIdIn").value = ls.get("dengar.spId", "") || SP_DEFAULT_ID;
@@ -658,7 +643,6 @@ function renderSpSet() {
 }
 function closeSettings() { $("scrim").hidden = true; }
 $("setBtn").onclick = openSettings;
-$("lockLyr").onchange = e => { if (window.Android && Android.setLockLyrics) { Android.setLockLyrics(e.target.checked); renderNP(); } };
 $("closeSet").onclick = closeSettings;
 $("scrim").addEventListener("click", e => { if (e.target === $("scrim")) closeSettings(); });
 $("showTok").onclick = () => { const i = $("tokenIn"); i.type = i.type === "password" ? "text" : "password"; $("showTok").textContent = i.type === "password" ? "Show" : "Hide"; };
