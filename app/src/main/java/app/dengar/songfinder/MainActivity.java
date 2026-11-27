@@ -14,8 +14,6 @@ import android.content.Context;
 import android.content.IntentFilter;
 import android.view.WindowManager;
 import android.provider.Settings;
-import android.content.ComponentName;
-import android.service.notification.NotificationListenerService;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -120,7 +118,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
-                pushNowPlaying(NowPlayingService.last);
+                pushNowPlaying(SpotifyNow.json());
                 pushLocked();
                 if (listenWhenReady) {
                     listenWhenReady = false;
@@ -161,7 +159,8 @@ public class MainActivity extends Activity {
         }
         handleIntent(getIntent());
 
-        NowPlayingService.listener = json -> runOnUiThread(() -> pushNowPlaying(json));
+        SpotifyNow.listener = json -> runOnUiThread(() -> pushNowPlaying(json));
+        SpotifyNow.start(this);
         applyLockScreen();
         registerReceiver(unlocked, new IntentFilter(Intent.ACTION_USER_PRESENT));
     }
@@ -174,14 +173,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Back from the "notification access" screen, or the service was stopped: reconnect.
-        if (NowPlayingService.hasAccess(this) && NowPlayingService.instance == null && Build.VERSION.SDK_INT >= 24) {
-            try {
-                NotificationListenerService.requestRebind(new ComponentName(this, NowPlayingService.class));
-            } catch (Exception ignored) {
-            }
-        }
-        pushNowPlaying(NowPlayingService.last);
+        pushNowPlaying(SpotifyNow.json());
         pushLocked();
     }
 
@@ -191,7 +183,7 @@ public class MainActivity extends Activity {
             unregisterReceiver(unlocked);
         } catch (Exception ignored) {
         }
-        if (NowPlayingService.listener != null) NowPlayingService.listener = null;
+        SpotifyNow.listener = null;
         super.onDestroy();
     }
 
@@ -265,33 +257,18 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean nowPlayingAccess() {
-            return NowPlayingService.hasAccess(MainActivity.this);
+            return SpotifyNow.seen(MainActivity.this);
         }
 
         @JavascriptInterface
         public String nowPlaying() {
-            return NowPlayingService.last;
+            return SpotifyNow.json();
         }
 
         @JavascriptInterface
         public void openNowPlayingAccess() {
-            runOnUiThread(() -> {
-                Intent i = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
-                if (Build.VERSION.SDK_INT >= 30) {
-                    Intent d = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);
-                    d.putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                            new ComponentName(MainActivity.this, NowPlayingService.class).flattenToString());
-                    try {
-                        startActivity(d);
-                        return;
-                    } catch (Exception ignored) {
-                    }
-                }
-                try {
-                    startActivity(i);
-                } catch (Exception ignored) {
-                }
-            });
+            // Device Broadcast Status is switched on inside Spotify's own settings.
+            openApp(SpotifyNow.PKG);
         }
 
         @JavascriptInterface
