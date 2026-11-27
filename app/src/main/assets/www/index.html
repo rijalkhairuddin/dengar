@@ -102,6 +102,17 @@ input[type="text"], input[type="password"], select { background: #10173a; border
 .lyrics p.gap { min-height: 14px; }
 .credit { font-size: 11px; color: var(--muted); }
 .credit a { color: var(--muted); }
+.np-top { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; }
+.np-top .cover { width: 56px; height: 56px; border-radius: 10px; font-size: 22px; }
+.np-k { font-size: 12px; font-weight: 700; color: var(--ok); text-transform: uppercase; letter-spacing: .06em; display: flex; align-items: center; gap: 6px; }
+.np-k i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
+.np-k.paused { color: var(--muted); } .np-k.paused i { background: var(--muted); }
+.np-t { font-weight: 700; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-a { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-top > div { min-width: 0; }
+.np-intro { display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 1.45; }
+.np-intro > b { font-size: 16px; }
+.np-intro ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -126,6 +137,8 @@ input[type="text"], input[type="password"], select { background: #10173a; border
   </section>
 
   <div id="note"></div>
+  <section class="card" id="npCard" hidden></section>
+  <section class="card" id="npLyrics" hidden></section>
   <section class="card" id="result" hidden></section>
   <section class="card" id="lyricsCard" hidden></section>
   <section class="card" id="pendingCard" hidden></section>
@@ -149,6 +162,11 @@ input[type="text"], input[type="password"], select { background: #10173a; border
       <label for="lenSel">Listening time</label>
       <select id="lenSel"><option value="6">6 seconds</option><option value="8">8 seconds</option><option value="10">10 seconds</option><option value="12">12 seconds</option></select>
       <div class="hint">Longer helps in noisy places. Each try uses one request.</div>
+    </div>
+    <div class="field" id="npSet" hidden>
+      <label>Lyrics for Spotify</label>
+      <div class="hint">Lets Dengar see which song Spotify (or another music app) is playing, so it can show the lyrics in time.</div>
+      <div class="row"><button class="btn" type="button" data-act="np-setup">Set up access</button></div>
     </div>
     <div class="msg" id="usage"></div>
     <div class="row"><button class="btn primary" type="button" id="saveSet">Save</button><button class="btn" type="button" id="closeSet">Close</button></div>
@@ -327,6 +345,12 @@ async function lrcFetch(path, params) {
   if (!r.ok) throw new Error("lrclib " + r.status);
   return r.json();
 }
+function pickHit(list, dur) {
+  // Prefer synced lyrics whose length matches the track (within 4 s) when we know it.
+  const fits = x => !dur || !x.duration || Math.abs(x.duration - dur) <= 4;
+  return list.find(x => x.syncedLyrics && fits(x)) || list.find(x => x.plainLyrics && fits(x))
+    || list.find(x => x.syncedLyrics) || list.find(x => x.plainLyrics) || null;
+}
 async function getLyrics(it) {
   if (it.lyrics) return it.lyrics;
   const base = it.title.replace(/\s*[\(\[][^\)\]]*(feat|ft\.|with|remaster|version|edit|mix|live)[^\)\]]*[\)\]]/gi, "").replace(/\s+-\s+.*(remaster|version|edit|mix|live).*$/i, "").trim() || it.title;
@@ -334,14 +358,14 @@ async function getLyrics(it) {
   let hit = null, definitive = true;
   try {
     const g = await lrcFetch("get", { artist_name: it.artist, track_name: it.title });
-    if (!g.miss && (g.syncedLyrics || g.plainLyrics || g.instrumental)) hit = g;
+    if (!g.miss && (g.syncedLyrics || g.plainLyrics || g.instrumental) && (!it.dur || !g.duration || Math.abs(g.duration - it.dur) <= 8)) hit = g;
     if (!hit) {
       const list = await lrcFetch("search", { artist_name: artist, track_name: base });
-      if (Array.isArray(list)) hit = list.find(x => x.syncedLyrics) || list.find(x => x.plainLyrics) || null;
+      if (Array.isArray(list)) hit = pickHit(list, it.dur);
     }
     if (!hit) {
       const list = await lrcFetch("search", { q: `${base} ${artist}` });
-      if (Array.isArray(list)) hit = list.find(x => x.syncedLyrics) || list.find(x => x.plainLyrics) || null;
+      if (Array.isArray(list)) hit = pickHit(list, it.dur);
     }
   } catch (e) { definitive = false; }
   const L = hit ? { synced: hit.syncedLyrics || "", plain: hit.plainLyrics || "", instrumental: !!hit.instrumental } : { none: true };
@@ -362,28 +386,29 @@ function parseSynced(txt) {
   }
   return out.sort((a, b) => a.t - b.t);
 }
-let lyrTimer = null, lyrOffset = 0;
-async function showLyrics(it, songStart) {
-  const card = $("lyricsCard");
-  clearInterval(lyrTimer); lyrOffset = 0;
+// clock: a wall-clock time (ms) when the song was at 0:00, or a function returning the song position in seconds.
+async function showLyrics(it, clock, card = $("lyricsCard")) {
+  clearInterval(card._t); card._off = 0; card._id = it.id;
   card.hidden = false;
   card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3></div><div class="empty">Looking for the lyrics…</div>`;
   const L = await getLyrics(it);
-  if ($("result").dataset.id !== it.id) return; // another song opened meanwhile
+  if (card._id !== it.id) return; // another song opened meanwhile
   const credit = `<div class="credit">Lyrics from <a href="https://lrclib.net" target="_blank" rel="noopener">LRCLIB</a></div>`;
   if (L.error) { card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3></div><div class="empty">Couldn't load lyrics right now. They'll load when you open this song again online.</div>`; return; }
   if (L.none || L.instrumental) { card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3></div><div class="empty">${L.instrumental ? "This one's instrumental." : "No lyrics found for this song."}</div>`; return; }
   const lines = L.synced ? parseSynced(L.synced) : [];
-  const live = !!(songStart && lines.length);
+  const live = !!(clock && lines.length);
+  const follow = typeof clock === "function";
   const body = lines.length ? lines.map((l, i) => `<p data-i="${i}" class="${l.text ? "" : "gap"}">${esc(l.text) || "&nbsp;"}</p>`).join("")
     : (L.plain || "").split(/\r?\n/).map(x => `<p class="${x.trim() ? "" : "gap"}">${esc(x) || "&nbsp;"}</p>`).join("");
   card.innerHTML = `<div class="lyr-head"><h3>Lyrics</h3>${live ? `<div class="lyr-ctl"><span class="pill">In sync</span><button type="button" data-act="lyr-" aria-label="Lyrics earlier">−1s</button><button type="button" data-act="lyr+" aria-label="Lyrics later">+1s</button></div>` : ""}</div>
-    <div class="lyrics${live ? " live" : ""}" id="lyrBox">${body}</div>${credit}`;
+    <div class="lyrics${live ? " live" : ""}" data-box>${body}</div>${credit}`;
   if (!live) return;
   let last = -1;
-  const box = $("lyrBox"), ps = box.querySelectorAll("p");
+  const box = card.querySelector("[data-box]"), ps = box.querySelectorAll("p");
   const step = () => {
-    const pos = (Date.now() - songStart) / 1000 + lyrOffset;
+    if (!follow && card.hidden) return;
+    const pos = (follow ? clock() : (Date.now() - clock) / 1000) + card._off;
     let idx = -1;
     for (let i = 0; i < lines.length; i++) { if (lines[i].t <= pos) idx = i; else break; }
     if (idx !== last) {
@@ -391,9 +416,9 @@ async function showLyrics(it, songStart) {
       if (idx >= 0 && ps[idx]) { ps[idx].classList.add("on"); box.scrollTop = ps[idx].offsetTop - box.clientHeight / 2 + ps[idx].clientHeight / 2; }
       last = idx;
     }
-    if (pos > lines[lines.length - 1].t + 15) { clearInterval(lyrTimer); box.classList.remove("live"); const pill = card.querySelector(".lyr-ctl"); if (pill) pill.remove(); }
+    if (!follow && pos > lines[lines.length - 1].t + 15) { clearInterval(card._t); box.classList.remove("live"); const pill = card.querySelector(".lyr-ctl"); if (pill) pill.remove(); }
   };
-  step(); lyrTimer = setInterval(step, 250);
+  step(); card._t = setInterval(step, 250);
 }
 
 async function saveForLater(blob, type, failed) {
@@ -426,10 +451,50 @@ async function flushPending() {
   renderHist(); renderPending();
 }
 
+/* ---------- now playing (Android: follows Spotify or another music app) ---------- */
+const NP = { cur: null, key: "", cache: {} };
+window.dengarNowPlaying = st => { NP.cur = st && st.title ? st : null; renderNP(); };
+function npPos() {
+  const s = NP.cur; if (!s) return 0;
+  return (s.pos + (s.playing ? (Date.now() - s.at) * (s.speed || 1) : 0)) / 1000;
+}
+function renderNP() {
+  const c = $("npCard"), lc = $("npLyrics");
+  const off = () => { c.hidden = true; lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = ""; };
+  if (!window.Android || !Android.nowPlayingAccess) return off();
+  if (!Android.nowPlayingAccess()) {
+    if (ls.get("dengar.npHide", false)) return off();
+    lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = "";
+    c.hidden = false;
+    c.innerHTML = `<div class="np-intro"><b>Lyrics for what's playing in Spotify</b>
+      <span>Dengar can follow the song playing in Spotify (or another music app) and scroll its lyrics in time. No Spotify login needed.</span>
+      <ol><li>Tap <b>Allow</b>, then turn on <b>Dengar</b>.</li><li>If the switch is greyed out: tap <b>App info</b>, then ⋮ (top right) › <b>Allow restricted settings</b>, then try Allow again.</li></ol>
+      <div class="row"><button class="btn primary" type="button" data-act="np-allow">Allow</button><button class="btn" type="button" data-act="np-info">App info</button><button class="btn ghost" type="button" data-act="np-hide">Not now</button></div></div>`;
+    return;
+  }
+  const s = NP.cur;
+  if (!s) {
+    lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = "";
+    c.hidden = false;
+    c.innerHTML = `<div class="pending"><span class="np-a">Play a song in Spotify and its lyrics appear here.</span><button class="btn" type="button" data-act="np-open" data-pkg="com.spotify.music">Open Spotify</button></div>`;
+    return;
+  }
+  const key = s.pkg + "|" + s.title + "|" + s.artist;
+  const art = s.art ? `<img class="cover" src="${esc(s.art)}" alt="">` : `<div class="cover ph" aria-hidden="true">\u266a</div>`;
+  c.hidden = false;
+  c.innerHTML = `<div class="np-top">${art}<div><div class="np-k${s.playing ? "" : " paused"}"><i></i>${s.playing ? "Playing" : "Paused"} on ${esc(s.app || "your phone")}</div><div class="np-t">${esc(s.title)}</div><div class="np-a">${esc(s.artist)}</div></div><button class="btn" type="button" data-act="np-open" data-pkg="${esc(s.pkg)}">Open</button></div>`;
+  if (key !== NP.key) {
+    NP.key = key;
+    const it = { id: "np" + Date.now().toString(36), title: s.title, artist: s.artist || "", album: s.album || "", dur: s.duration ? Math.round(s.duration / 1000) : 0 };
+    if (NP.cache[key]) it.lyrics = NP.cache[key];
+    showLyrics(it, npPos, lc).then(() => { if (it.lyrics) NP.cache[key] = it.lyrics; });
+  }
+}
+
 /* ---------- rendering ---------- */
 function setStatus(a, b) { $("status").textContent = a; $("substatus").textContent = b || ""; }
 function note(kind, html) { $("note").innerHTML = html ? `<div class="msg ${kind === "err" ? "err" : kind === "warn" ? "warn" : ""}">${html}</div>` : ""; }
-function clearResult() { $("result").hidden = true; $("result").dataset.id = ""; $("lyricsCard").hidden = true; clearInterval(lyrTimer); note(""); }
+function clearResult() { $("result").hidden = true; $("result").dataset.id = ""; $("lyricsCard").hidden = true; clearInterval($("lyricsCard")._t); $("lyricsCard")._id = ""; note(""); }
 function links(it) {
   const q = encodeURIComponent(`${it.title} ${it.artist}`);
   const a = [];
@@ -468,7 +533,7 @@ function renderUsage() {
 }
 
 /* ---------- settings ---------- */
-function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("scrim").hidden = false; $("tokenIn").focus(); }
+function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); $("scrim").hidden = false; $("tokenIn").focus(); }
 function closeSettings() { $("scrim").hidden = true; }
 $("setBtn").onclick = openSettings;
 $("closeSet").onclick = closeSettings;
@@ -494,8 +559,13 @@ document.addEventListener("click", e => {
     else navigator.share({ title: `${it.title} – ${it.artist}`, text: `${it.title} by ${it.artist}`, url: url || undefined }).catch(() => {});
   }
   else if (b.dataset.act === "settings") openSettings();
-  else if (b.dataset.act === "lyr-") lyrOffset -= 1;
-  else if (b.dataset.act === "lyr+") lyrOffset += 1;
+  else if (b.dataset.act === "lyr-") b.closest(".card")._off -= 1;
+  else if (b.dataset.act === "lyr+") b.closest(".card")._off += 1;
+  else if (b.dataset.act === "np-allow") Android.openNowPlayingAccess();
+  else if (b.dataset.act === "np-info") Android.openAppInfo();
+  else if (b.dataset.act === "np-open") Android.openApp(b.dataset.pkg || "com.spotify.music");
+  else if (b.dataset.act === "np-setup") { ls.set("dengar.npHide", false); closeSettings(); renderNP(); Android.openNowPlayingAccess(); }
+  else if (b.dataset.act === "np-hide") { ls.set("dengar.npHide", true); renderNP(); }
   else if (b.dataset.act === "flush") flushPending();
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("scrim").hidden) closeSettings(); });
@@ -506,6 +576,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => navigato
 
 window.dengarListen = () => { if (!S.busy) { window.scrollTo(0, 0); listen(); } };
 renderHist(); renderPending(); flushPending();
+if (window.Android && Android.nowPlaying) { try { window.dengarNowPlaying(JSON.parse(Android.nowPlaying())); } catch (e) { renderNP(); } }
 if (S.history.length) setStatus("Tap to identify a song", `${S.history.length} song${S.history.length > 1 ? "s" : ""} found so far.`);
 </script>
 </body>
