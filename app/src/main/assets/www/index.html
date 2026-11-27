@@ -113,6 +113,14 @@ input[type="text"], input[type="password"], select { background: #10173a; border
 .np-intro { display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 1.45; }
 .np-intro > b { font-size: 16px; }
 .np-intro ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+.tog { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.4; }
+.tog input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
+.lockhint { display: none; font-size: 13px; color: var(--muted); }
+body.locked .lockhint { display: inline; }
+body.locked #setBtn, body.locked .hist, body.locked #pendingCard, body.locked #result, body.locked #lyricsCard, body.locked #note { display: none !important; }
+body.locked.np-on .stage { display: none; }
+body.locked .lyrics { max-height: 64vh; }
+body.locked .lyrics p { font-size: 21px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -120,6 +128,7 @@ input[type="text"], input[type="password"], select { background: #10173a; border
 <div class="app">
   <header class="top">
     <div class="brand"><i></i>Dengar</div>
+    <span class="lockhint">Unlock to see your songs</span>
     <button class="icon-btn" id="setBtn" type="button">Settings</button>
   </header>
 
@@ -167,6 +176,8 @@ input[type="text"], input[type="password"], select { background: #10173a; border
       <label>Lyrics for Spotify</label>
       <div class="hint">Lets Dengar see which song Spotify (or another music app) is playing, so it can show the lyrics in time.</div>
       <div class="row"><button class="btn" type="button" data-act="np-setup">Set up access</button></div>
+      <label class="tog"><input type="checkbox" id="lockLyr"><span>Show lyrics on the lock screen, and keep the screen on while a song plays</span></label>
+      <div class="hint">With this on, lock your phone while Dengar is showing lyrics: pressing the power button brings the lyrics back without unlocking. From the lock screen you can also swipe down and tap the Dengar tile.</div>
     </div>
     <div class="msg" id="usage"></div>
     <div class="row"><button class="btn primary" type="button" id="saveSet">Save</button><button class="btn" type="button" id="closeSet">Close</button></div>
@@ -452,7 +463,12 @@ async function flushPending() {
 }
 
 /* ---------- now playing (Android: follows Spotify or another music app) ---------- */
-const NP = { cur: null, key: "", cache: {} };
+const NP = { cur: null, key: "", cache: {}, awake: false };
+window.dengarLocked = l => { document.body.classList.toggle("locked", !!l); if (l) closeSettings(); };
+function npAwake(on) {
+  on = !!(on && Android.keepAwake && Android.lockLyrics && Android.lockLyrics());
+  if (on !== NP.awake) { NP.awake = on; try { Android.keepAwake(on); } catch (e) {} }
+}
 window.dengarNowPlaying = st => { NP.cur = st && st.title ? st : null; renderNP(); };
 function npPos() {
   const s = NP.cur; if (!s) return 0;
@@ -460,6 +476,8 @@ function npPos() {
 }
 function renderNP() {
   const c = $("npCard"), lc = $("npLyrics");
+  document.body.classList.toggle("np-on", !!(NP.cur && window.Android && Android.nowPlayingAccess && Android.nowPlayingAccess()));
+  if (window.Android && Android.keepAwake) npAwake(NP.cur && NP.cur.playing);
   const off = () => { c.hidden = true; lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = ""; };
   if (!window.Android || !Android.nowPlayingAccess) return off();
   if (!Android.nowPlayingAccess()) {
@@ -533,9 +551,10 @@ function renderUsage() {
 }
 
 /* ---------- settings ---------- */
-function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); $("scrim").hidden = false; $("tokenIn").focus(); }
+function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); if (window.Android && Android.lockLyrics) $("lockLyr").checked = Android.lockLyrics(); $("scrim").hidden = false; $("tokenIn").focus(); }
 function closeSettings() { $("scrim").hidden = true; }
 $("setBtn").onclick = openSettings;
+$("lockLyr").onchange = e => { if (window.Android && Android.setLockLyrics) { Android.setLockLyrics(e.target.checked); renderNP(); } };
 $("closeSet").onclick = closeSettings;
 $("scrim").addEventListener("click", e => { if (e.target === $("scrim")) closeSettings(); });
 $("showTok").onclick = () => { const i = $("tokenIn"); i.type = i.type === "password" ? "text" : "password"; $("showTok").textContent = i.type === "password" ? "Show" : "Hide"; };
