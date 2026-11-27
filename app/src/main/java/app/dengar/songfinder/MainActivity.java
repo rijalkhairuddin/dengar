@@ -8,6 +8,9 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
+import android.content.ComponentName;
+import android.service.notification.NotificationListenerService;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -80,6 +83,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
+                pushNowPlaying(NowPlayingService.last);
                 if (listenWhenReady) {
                     listenWhenReady = false;
                     triggerListen();
@@ -118,6 +122,32 @@ public class MainActivity extends Activity {
             web.loadUrl(START_URL);
         }
         handleIntent(getIntent());
+
+        NowPlayingService.listener = json -> runOnUiThread(() -> pushNowPlaying(json));
+    }
+
+    private void pushNowPlaying(String json) {
+        if (!pageReady || web == null) return;
+        web.evaluateJavascript("window.dengarNowPlaying && window.dengarNowPlaying(" + json + ")", null);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Back from the "notification access" screen, or the service was stopped: reconnect.
+        if (NowPlayingService.hasAccess(this) && NowPlayingService.instance == null && Build.VERSION.SDK_INT >= 24) {
+            try {
+                NotificationListenerService.requestRebind(new ComponentName(this, NowPlayingService.class));
+            } catch (Exception ignored) {
+            }
+        }
+        pushNowPlaying(NowPlayingService.last);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (NowPlayingService.listener != null) NowPlayingService.listener = null;
+        super.onDestroy();
     }
 
     @Override
@@ -186,6 +216,56 @@ public class MainActivity extends Activity {
             send.setType("text/plain");
             send.putExtra(Intent.EXTRA_TEXT, text);
             runOnUiThread(() -> startActivity(Intent.createChooser(send, getString(R.string.share_title))));
+        }
+
+        @JavascriptInterface
+        public boolean nowPlayingAccess() {
+            return NowPlayingService.hasAccess(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public String nowPlaying() {
+            return NowPlayingService.last;
+        }
+
+        @JavascriptInterface
+        public void openNowPlayingAccess() {
+            runOnUiThread(() -> {
+                Intent i = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                if (Build.VERSION.SDK_INT >= 30) {
+                    Intent d = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);
+                    d.putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                            new ComponentName(MainActivity.this, NowPlayingService.class).flattenToString());
+                    try {
+                        startActivity(d);
+                        return;
+                    } catch (Exception ignored) {
+                    }
+                }
+                try {
+                    startActivity(i);
+                } catch (Exception ignored) {
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void openAppInfo() {
+            runOnUiThread(() -> {
+                try {
+                    startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Exception ignored) {
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void openApp(String pkg) {
+            runOnUiThread(() -> {
+                Intent i = getPackageManager().getLaunchIntentForPackage(pkg);
+                if (i != null) startActivity(i);
+            });
         }
 
         @JavascriptInterface
