@@ -179,6 +179,13 @@ body.locked .lyrics p { font-size: 21px; }
       <label class="tog"><input type="checkbox" id="lockLyr"><span>Show lyrics on the lock screen, and keep the screen on while a song plays</span></label>
       <div class="hint">With this on, lock your phone while Dengar is showing lyrics: pressing the power button brings the lyrics back without unlocking. From the lock screen you can also swipe down and tap the Dengar tile.</div>
     </div>
+    <div class="field" id="spSet" hidden>
+      <label for="spIdIn">Spotify (lyrics for what's playing)</label>
+      <div class="hint" id="spState"></div>
+      <input type="text" id="spIdIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Spotify Client ID">
+      <div class="hint">From your app at <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a>. Its Redirect URI must be exactly: <b id="spRed"></b></div>
+      <div class="row"><button class="btn" type="button" data-act="sp-connect">Connect Spotify</button><button class="btn ghost" type="button" data-act="sp-logout" id="spOut">Disconnect</button></div>
+    </div>
     <div class="msg" id="usage"></div>
     <div class="row"><button class="btn primary" type="button" id="saveSet">Save</button><button class="btn" type="button" id="closeSet">Close</button></div>
   </div>
@@ -462,7 +469,94 @@ async function flushPending() {
   renderHist(); renderPending();
 }
 
-/* ---------- now playing (Android: follows Spotify or another music app) ---------- */
+/* ---------- Spotify sign-in for the web/iPhone version (PKCE, no server needed) ---------- */
+const SP_DEFAULT_ID = "";
+const SP = (() => {
+  const RED = location.origin + location.pathname.replace(/[^/]*$/, "");
+  const SCOPE = "user-read-currently-playing user-read-playback-state";
+  let tok = ls.get("dengar.sp", null);
+  let timer = null, busy = false;
+  const cid = () => ls.get("dengar.spId", "") || SP_DEFAULT_ID;
+  const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  async function login() {
+    if (!cid()) { openSettings(); $("spIdIn").focus(); note("warn", "Paste your Spotify Client ID in Settings first."); return; }
+    const v = b64u(crypto.getRandomValues(new Uint8Array(48)));
+    const ch = b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
+    ls.set("dengar.spVer", v);
+    location.href = "https://accounts.spotify.com/authorize?" + new URLSearchParams({ client_id: cid(), response_type: "code", redirect_uri: RED, code_challenge_method: "S256", code_challenge: ch, scope: SCOPE, state: v });
+  }
+  async function tokenReq(body) {
+    const r = await fetch("https://accounts.spotify.com/api/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error_description || j.error || ("HTTP " + r.status));
+    tok = { access: j.access_token, refresh: j.refresh_token || (tok && tok.refresh), exp: Date.now() + ((j.expires_in || 3600) - 60) * 1000 };
+    ls.set("dengar.sp", tok);
+  }
+  async function finish() {
+    const q = new URLSearchParams(location.search);
+    if (!q.has("code") && !q.has("error")) return;
+    history.replaceState(null, "", RED);
+    if (q.get("error")) { note("err", q.get("error") === "access_denied" ? "Spotify sign-in was cancelled." : "Spotify said: " + esc(q.get("error"))); return; }
+    // The verifier normally comes from this phone's storage; state carries a copy in case the sign-in finished in another browser tab.
+    const v = ls.get("dengar.spVer", "") || q.get("state") || "";
+    try {
+      await tokenReq({ grant_type: "authorization_code", code: q.get("code"), redirect_uri: RED, client_id: cid(), code_verifier: v });
+      ls.set("dengar.spVer", ""); note("ok", "Spotify connected. Play a song in Spotify and its lyrics appear here.");
+    } catch (e) { note("err", "Couldn't connect Spotify: " + esc(e.message)); }
+  }
+  async function access() {
+    if (!tok) return null;
+    if (Date.now() > tok.exp) {
+      try { await tokenReq({ grant_type: "refresh_token", refresh_token: tok.refresh, client_id: cid() }); }
+      catch (e) { if (/invalid|revoked|expired/i.test(e.message)) { logout(); note("warn", "Spotify signed you out. Connect it again in Settings."); } return null; }
+    }
+    return tok.access;
+  }
+  function logout() { tok = null; ls.set("dengar.sp", null); clearTimeout(timer); window.dengarNowPlaying({}); }
+  async function poll() {
+    clearTimeout(timer);
+    if (!tok || document.hidden || busy) return;
+    busy = true;
+    let next = 5000;
+    try {
+      const a = await access();
+      if (!a) { next = tok ? 30000 : 0; return; }
+      const t0 = Date.now();
+      const r = await fetch("https://api.spotify.com/v1/me/player/currently-playing", { headers: { Authorization: "Bearer " + a } });
+      const t1 = Date.now();
+      if (r.status === 204) { window.dengarNowPlaying({}); next = 8000; }
+      else if (r.status === 401) { tok.exp = 0; next = 300; }
+      else if (r.status === 429) { next = (parseInt(r.headers.get("Retry-After"), 10) || 30) * 1000; }
+      else if (r.status === 403) { next = 0; note("err", "Spotify refused access. Check that your Spotify account is added under User Management in your Spotify developer app, and that you have Premium."); }
+      else if (r.ok) {
+        const j = await r.json(), it = j.item;
+        if (!it || j.currently_playing_type !== "track") { window.dengarNowPlaying({}); next = 8000; }
+        else {
+          const imgs = (it.album && it.album.images) || [];
+          window.dengarNowPlaying({ pkg: "spotify", app: "Spotify", id: it.uri || "", title: it.name, artist: (it.artists || []).map(x => x.name).join(", "), album: it.album ? it.album.name : "", duration: it.duration_ms || 0, art: (imgs[1] || imgs[0] || {}).url || "", playing: !!j.is_playing, pos: j.progress_ms || 0, speed: 1, at: Math.round((t0 + t1) / 2) });
+          // Check again soon, and right when the song should end.
+          if (j.is_playing && it.duration_ms) next = Math.max(800, Math.min(5000, it.duration_ms - (j.progress_ms || 0) + 800));
+        }
+      } else next = 15000;
+    } catch (e) { next = 15000; }
+    finally { busy = false; if (next) timer = setTimeout(poll, next); }
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+  return { login, logout, poll, finish, linked: () => !!tok, hasId: () => !!cid(), RED, cid };
+})();
+
+/* ---------- now playing: Android follows Spotify's broadcasts, iPhone/web asks Spotify's Web API ---------- */
+const NPS = window.Android && Android.nowPlayingAccess
+  ? { kind: "android", ready: () => Android.nowPlayingAccess(), connect: () => Android.openNowPlayingAccess(), open: s => Android.openApp((s && s.pkg) || "com.spotify.music") }
+  : { kind: "web", ready: () => SP.linked(), connect: () => SP.login(), open: s => { location.href = (s && s.id) || "spotify:"; } };
+let wakeLock = null;
+async function webAwake(on) {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    if (on && !wakeLock && !document.hidden) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); }
+    else if (!on && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+  } catch (e) { wakeLock = null; }
+}
 const NP = { cur: null, key: "", cache: {}, awake: false };
 window.dengarLocked = l => { document.body.classList.toggle("locked", !!l); if (l) closeSettings(); };
 function npAwake(on) {
@@ -476,15 +570,18 @@ function npPos() {
 }
 function renderNP() {
   const c = $("npCard"), lc = $("npLyrics");
-  document.body.classList.toggle("np-on", !!(NP.cur && window.Android && Android.nowPlayingAccess && Android.nowPlayingAccess()));
+  document.body.classList.toggle("np-on", !!(NP.cur && NPS.ready()));
   if (window.Android && Android.keepAwake) npAwake(NP.cur && NP.cur.playing);
+  else webAwake(!!(NP.cur && NP.cur.playing && NPS.ready()));
   const off = () => { c.hidden = true; lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = ""; };
-  if (!window.Android || !Android.nowPlayingAccess) return off();
-  if (!Android.nowPlayingAccess()) {
+  if (!NPS.ready()) {
     if (ls.get("dengar.npHide", false)) return off();
     lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = "";
     c.hidden = false;
-    c.innerHTML = `<div class="np-intro"><b>Lyrics for what's playing in Spotify</b>
+    c.innerHTML = NPS.kind === "web" ? `<div class="np-intro"><b>Lyrics for what's playing in Spotify</b>
+      <span>Connect your Spotify account once, and Dengar shows the lyrics of whatever Spotify is playing, in time with the song.</span>
+      <div class="row"><button class="btn primary" type="button" data-act="np-allow">Connect Spotify</button><button class="btn ghost" type="button" data-act="np-hide">Not now</button></div></div>`
+    : `<div class="np-intro"><b>Lyrics for what's playing in Spotify</b>
       <span>Dengar can follow the song playing in Spotify and scroll its lyrics in time. No Spotify login needed, just one setting in Spotify:</span>
       <ol><li>Tap <b>Open Spotify</b>, then go to <b>Settings</b> (your profile picture › Settings and privacy).</li><li>Under <b>Playback</b>, turn on <b>Device Broadcast Status</b>.</li><li>Play a song, then come back to Dengar.</li></ol>
       <div class="row"><button class="btn primary" type="button" data-act="np-allow">Open Spotify</button><button class="btn ghost" type="button" data-act="np-hide">Not now</button></div></div>`;
@@ -494,13 +591,13 @@ function renderNP() {
   if (!s) {
     lc.hidden = true; clearInterval(lc._t); lc._id = ""; NP.key = "";
     c.hidden = false;
-    c.innerHTML = `<div class="pending"><span class="np-a">Play a song in Spotify and its lyrics appear here.</span><button class="btn" type="button" data-act="np-open" data-pkg="com.spotify.music">Open Spotify</button></div>`;
+    c.innerHTML = `<div class="pending"><span class="np-a">Play a song in Spotify and its lyrics appear here.</span><button class="btn" type="button" data-act="np-open">Open Spotify</button></div>`;
     return;
   }
   const key = s.pkg + "|" + s.title + "|" + s.artist;
   const art = s.art ? `<img class="cover" src="${esc(s.art)}" alt="">` : `<div class="cover ph" aria-hidden="true">\u266a</div>`;
   c.hidden = false;
-  c.innerHTML = `<div class="np-top">${art}<div><div class="np-k${s.playing ? "" : " paused"}"><i></i>${s.playing ? "Playing" : "Paused"} on ${esc(s.app || "your phone")}</div><div class="np-t">${esc(s.title)}</div><div class="np-a">${esc(s.artist)}</div></div><button class="btn" type="button" data-act="np-open" data-pkg="${esc(s.pkg)}">Open</button></div>`;
+  c.innerHTML = `<div class="np-top">${art}<div><div class="np-k${s.playing ? "" : " paused"}"><i></i>${s.playing ? "Playing" : "Paused"} on ${esc(s.app || "your phone")}</div><div class="np-t">${esc(s.title)}</div><div class="np-a">${esc(s.artist)}</div></div><button class="btn" type="button" data-act="np-open">Open</button></div>`;
   if (key !== NP.key) {
     NP.key = key;
     const it = { id: "np" + Date.now().toString(36), title: s.title, artist: s.artist || "", album: s.album || "", dur: s.duration ? Math.round(s.duration / 1000) : 0 };
@@ -551,7 +648,14 @@ function renderUsage() {
 }
 
 /* ---------- settings ---------- */
-function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); if (window.Android && Android.lockLyrics) $("lockLyr").checked = Android.lockLyrics(); $("scrim").hidden = false; $("tokenIn").focus(); }
+function openSettings() { $("tokenIn").value = S.token; $("tokenIn").type = "password"; $("showTok").textContent = "Show"; $("lenSel").value = String(S.len); renderUsage(); $("npSet").hidden = !(window.Android && Android.openNowPlayingAccess); renderSpSet(); if (window.Android && Android.lockLyrics) $("lockLyr").checked = Android.lockLyrics(); $("scrim").hidden = false; $("tokenIn").focus(); }
+function renderSpSet() {
+  $("spSet").hidden = NPS.kind !== "web";
+  $("spIdIn").value = ls.get("dengar.spId", "") || SP_DEFAULT_ID;
+  $("spRed").textContent = SP.RED;
+  $("spState").textContent = SP.linked() ? "Connected. Lyrics follow what Spotify is playing." : "Not connected.";
+  $("spOut").hidden = !SP.linked();
+}
 function closeSettings() { $("scrim").hidden = true; }
 $("setBtn").onclick = openSettings;
 $("lockLyr").onchange = e => { if (window.Android && Android.setLockLyrics) { Android.setLockLyrics(e.target.checked); renderNP(); } };
@@ -561,6 +665,7 @@ $("showTok").onclick = () => { const i = $("tokenIn"); i.type = i.type === "pass
 $("clearTok").onclick = () => { $("tokenIn").value = ""; };
 $("saveSet").onclick = () => {
   S.token = $("tokenIn").value.trim(); S.len = parseInt($("lenSel").value, 10) || 8;
+  if (NPS.kind === "web") ls.set("dengar.spId", $("spIdIn").value.trim());
   ls.set("dengar.token", S.token); ls.set("dengar.len", S.len);
   closeSettings(); note("ok", "Settings saved.");
 };
@@ -580,10 +685,11 @@ document.addEventListener("click", e => {
   else if (b.dataset.act === "settings") openSettings();
   else if (b.dataset.act === "lyr-") b.closest(".card")._off -= 1;
   else if (b.dataset.act === "lyr+") b.closest(".card")._off += 1;
-  else if (b.dataset.act === "np-allow") Android.openNowPlayingAccess();
-  else if (b.dataset.act === "np-info") Android.openAppInfo();
-  else if (b.dataset.act === "np-open") Android.openApp(b.dataset.pkg || "com.spotify.music");
+  else if (b.dataset.act === "np-allow") NPS.connect();
+  else if (b.dataset.act === "np-open") NPS.open(NP.cur);
   else if (b.dataset.act === "np-setup") { ls.set("dengar.npHide", false); closeSettings(); renderNP(); Android.openNowPlayingAccess(); }
+  else if (b.dataset.act === "sp-connect") { ls.set("dengar.spId", $("spIdIn").value.trim()); ls.set("dengar.npHide", false); closeSettings(); SP.login(); }
+  else if (b.dataset.act === "sp-logout") { SP.logout(); renderSpSet(); }
   else if (b.dataset.act === "np-hide") { ls.set("dengar.npHide", true); renderNP(); }
   else if (b.dataset.act === "flush") flushPending();
 });
@@ -596,6 +702,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => navigato
 window.dengarListen = () => { if (!S.busy) { window.scrollTo(0, 0); listen(); } };
 renderHist(); renderPending(); flushPending();
 if (window.Android && Android.nowPlaying) { try { window.dengarNowPlaying(JSON.parse(Android.nowPlaying())); } catch (e) { renderNP(); } }
+else { renderNP(); SP.finish().then(() => { renderNP(); SP.poll(); }); }
 if (S.history.length) setStatus("Tap to identify a song", `${S.history.length} song${S.history.length > 1 ? "s" : ""} found so far.`);
 </script>
 </body>
