@@ -9,4 +9,5 @@
     <string name="shortcut_short">Identify song</string>
     <string name="shortcut_long">Identify the song playing</string>
     <string name="share_title">Share song</string>
+    <string name="np_label">Dengar lyrics for Spotify</string>
 </resources>
