@@ -8,7 +8,14 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.view.WindowManager;
 import android.provider.Settings;
+import android.content.ComponentName;
+import android.service.notification.NotificationListenerService;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -38,6 +45,38 @@ public class MainActivity extends Activity {
     private PermissionRequest pendingPermission;
     private boolean pageReady = false;
     private boolean listenWhenReady = false;
+    private boolean awake = false;
+
+    /** Phone unlocked while Dengar is showing over the lock screen. */
+    private final BroadcastReceiver unlocked = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            pushLocked();
+        }
+    };
+
+    static boolean lockLyricsOn(Context c) {
+        return c.getSharedPreferences(SongWidget.PREFS, MODE_PRIVATE).getBoolean("lockLyrics", true);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void applyLockScreen() {
+        boolean on = lockLyricsOn(this);
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(on);
+        } else if (on) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        }
+    }
+
+    private void pushLocked() {
+        if (!pageReady || web == null) return;
+        KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        boolean locked = km != null && km.isKeyguardLocked();
+        web.evaluateJavascript("window.dengarLocked && window.dengarLocked(" + locked + ")", null);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,7 +120,8 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
-                pushNowPlaying(SpotifyNow.json());
+                pushNowPlaying(NowPlayingService.last);
+                pushLocked();
                 if (listenWhenReady) {
                     listenWhenReady = false;
                     triggerListen();
@@ -121,8 +161,9 @@ public class MainActivity extends Activity {
         }
         handleIntent(getIntent());
 
-        SpotifyNow.listener = json -> runOnUiThread(() -> pushNowPlaying(json));
-        SpotifyNow.start(this);
+        NowPlayingService.listener = json -> runOnUiThread(() -> pushNowPlaying(json));
+        applyLockScreen();
+        registerReceiver(unlocked, new IntentFilter(Intent.ACTION_USER_PRESENT));
     }
 
     private void pushNowPlaying(String json) {
@@ -133,12 +174,24 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        pushNowPlaying(SpotifyNow.json());
+        // Back from the "notification access" screen, or the service was stopped: reconnect.
+        if (NowPlayingService.hasAccess(this) && NowPlayingService.instance == null && Build.VERSION.SDK_INT >= 24) {
+            try {
+                NotificationListenerService.requestRebind(new ComponentName(this, NowPlayingService.class));
+            } catch (Exception ignored) {
+            }
+        }
+        pushNowPlaying(NowPlayingService.last);
+        pushLocked();
     }
 
     @Override
     protected void onDestroy() {
-        SpotifyNow.listener = null;
+        try {
+            unregisterReceiver(unlocked);
+        } catch (Exception ignored) {
+        }
+        if (NowPlayingService.listener != null) NowPlayingService.listener = null;
         super.onDestroy();
     }
 
@@ -212,18 +265,33 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public boolean nowPlayingAccess() {
-            return SpotifyNow.seen(MainActivity.this);
+            return NowPlayingService.hasAccess(MainActivity.this);
         }
 
         @JavascriptInterface
         public String nowPlaying() {
-            return SpotifyNow.json();
+            return NowPlayingService.last;
         }
 
         @JavascriptInterface
         public void openNowPlayingAccess() {
-            // Device Broadcast Status is switched on inside Spotify's own settings.
-            openApp(SpotifyNow.PKG);
+            runOnUiThread(() -> {
+                Intent i = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                if (Build.VERSION.SDK_INT >= 30) {
+                    Intent d = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);
+                    d.putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                            new ComponentName(MainActivity.this, NowPlayingService.class).flattenToString());
+                    try {
+                        startActivity(d);
+                        return;
+                    } catch (Exception ignored) {
+                    }
+                }
+                try {
+                    startActivity(i);
+                } catch (Exception ignored) {
+                }
+            });
         }
 
         @JavascriptInterface
@@ -242,6 +310,28 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 Intent i = getPackageManager().getLaunchIntentForPackage(pkg);
                 if (i != null) startActivity(i);
+            });
+        }
+
+        @JavascriptInterface
+        public boolean lockLyrics() {
+            return lockLyricsOn(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void setLockLyrics(boolean on) {
+            getSharedPreferences(SongWidget.PREFS, MODE_PRIVATE).edit().putBoolean("lockLyrics", on).apply();
+            runOnUiThread(MainActivity.this::applyLockScreen);
+        }
+
+        /** Keeps the screen on while lyrics are playing. */
+        @JavascriptInterface
+        public void keepAwake(boolean on) {
+            runOnUiThread(() -> {
+                if (on == awake) return;
+                awake = on;
+                if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             });
         }
 
