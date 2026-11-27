@@ -8,6 +8,11 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.view.WindowManager;
 import android.provider.Settings;
 import android.content.ComponentName;
 import android.service.notification.NotificationListenerService;
@@ -40,6 +45,38 @@ public class MainActivity extends Activity {
     private PermissionRequest pendingPermission;
     private boolean pageReady = false;
     private boolean listenWhenReady = false;
+    private boolean awake = false;
+
+    /** Phone unlocked while Dengar is showing over the lock screen. */
+    private final BroadcastReceiver unlocked = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            pushLocked();
+        }
+    };
+
+    static boolean lockLyricsOn(Context c) {
+        return c.getSharedPreferences(SongWidget.PREFS, MODE_PRIVATE).getBoolean("lockLyrics", true);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void applyLockScreen() {
+        boolean on = lockLyricsOn(this);
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(on);
+        } else if (on) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        }
+    }
+
+    private void pushLocked() {
+        if (!pageReady || web == null) return;
+        KeyguardManager km = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        boolean locked = km != null && km.isKeyguardLocked();
+        web.evaluateJavascript("window.dengarLocked && window.dengarLocked(" + locked + ")", null);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,6 +121,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
                 pushNowPlaying(NowPlayingService.last);
+                pushLocked();
                 if (listenWhenReady) {
                     listenWhenReady = false;
                     triggerListen();
@@ -124,6 +162,8 @@ public class MainActivity extends Activity {
         handleIntent(getIntent());
 
         NowPlayingService.listener = json -> runOnUiThread(() -> pushNowPlaying(json));
+        applyLockScreen();
+        registerReceiver(unlocked, new IntentFilter(Intent.ACTION_USER_PRESENT));
     }
 
     private void pushNowPlaying(String json) {
@@ -142,10 +182,15 @@ public class MainActivity extends Activity {
             }
         }
         pushNowPlaying(NowPlayingService.last);
+        pushLocked();
     }
 
     @Override
     protected void onDestroy() {
+        try {
+            unregisterReceiver(unlocked);
+        } catch (Exception ignored) {
+        }
         if (NowPlayingService.listener != null) NowPlayingService.listener = null;
         super.onDestroy();
     }
@@ -265,6 +310,28 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 Intent i = getPackageManager().getLaunchIntentForPackage(pkg);
                 if (i != null) startActivity(i);
+            });
+        }
+
+        @JavascriptInterface
+        public boolean lockLyrics() {
+            return lockLyricsOn(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void setLockLyrics(boolean on) {
+            getSharedPreferences(SongWidget.PREFS, MODE_PRIVATE).edit().putBoolean("lockLyrics", on).apply();
+            runOnUiThread(MainActivity.this::applyLockScreen);
+        }
+
+        /** Keeps the screen on while lyrics are playing. */
+        @JavascriptInterface
+        public void keepAwake(boolean on) {
+            runOnUiThread(() -> {
+                if (on == awake) return;
+                awake = on;
+                if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             });
         }
 
